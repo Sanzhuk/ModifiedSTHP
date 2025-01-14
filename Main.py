@@ -215,8 +215,8 @@ def main():
         n_head=opt.n_head,
         d_k=opt.d_k,
         d_v=opt.d_v,
-        dropout=opt.dropout
-        # lambda_window=opt.lambda_window
+        dropout=opt.dropout,
+        lambda_window=opt.lambda_window
     )
     model.to(opt.device)
 

@@ -146,21 +146,17 @@ class LabelSmoothingLoss(nn.Module):
         loss = loss * non_pad_mask
         return loss
 
-
-
-def get_window_sizes(datas, lambda_window):
-    window_sizes = []
+def get_window_sizes(tensor_data, lambda_window):
+    sorted_data, _ = torch.sort(tensor_data)
     
-    for data in datas:
-        window_sizes.append(10)
-        continue
-        cnt = 0
-        for dif_data in datas:
-            time1 = data
-            time2 = dif_data
-            
-            if time1 >= time2 and time1 - time2 <= lambda_window:
-                cnt += 1
-        window_sizes.append(cnt)
-        
+    lower_bound = (sorted_data.unsqueeze(0) >= (tensor_data.unsqueeze(1) - lambda_window)).type(torch.int64)
+    
+    idx = torch.argmax(lower_bound, dim=1)
+    
+    # Compute the position indices for each element
+    position = torch.searchsorted(sorted_data, tensor_data, right=True) - 1
+    
+    # Compute window sizes
+    window_sizes = position - idx + 1
+    
     return window_sizes

@@ -38,17 +38,38 @@ def get_subsequent_mask(seq):
 def get_sparse_mask(seq, window_sizes):
     sz_b, len_s = seq.size()
     
-    sparse_mask = torch.tril(
-        torch.ones((len_s, len_s), device=seq.device, dtype=torch.uint8))
+    sparse_mask = torch.tril(torch.ones((len_s, len_s), device=seq.device, dtype=torch.uint8))
     
-    for i in range(len_s):
-        win_size = window_sizes[i]
-        start_mask = i
-        end_mask = min(i + win_size, len_s)
-        sparse_mask[start_mask:end_mask, i] = 0
-        
-    sparse_mask = sparse_mask.unsqueeze(0).expand(sz_b, -1, -1) # b x ls x ls
+    # Create a matrix with indices corresponding to the sequence length
+    
+    row_indices = torch.transpose(torch.arange(len_s, device=seq.device).unsqueeze(0).expand(len_s, -1), 0, 1)
+    col_indices = torch.transpose(torch.arange(len_s, device=seq.device).unsqueeze(1).expand(-1, len_s), 0, 1)
+    
+    # Compute valid regions based on window_sizes
+    valid_region = (col_indices < row_indices + window_sizes.unsqueeze(1))
+    
+    # Mask out the valid regions
+    sparse_mask[valid_region] = 0
+    
+    # Expand the sparse mask for all batches
+    sparse_mask = sparse_mask.unsqueeze(0).expand(sz_b, -1, -1)  # b x ls x ls
     return sparse_mask
+
+
+# def get_sparse_mask(seq, window_sizes):
+#     sz_b, len_s = seq.size()
+    
+#     sparse_mask = torch.tril(
+#         torch.ones((len_s, len_s), device=seq.device, dtype=torch.uint8))
+    
+#     for i in range(len_s):
+#         win_size = window_sizes[i]
+#         start_mask = i
+#         end_mask = min(i + win_size, len_s)
+#         sparse_mask[start_mask:end_mask, i] = 0
+        
+#     sparse_mask = sparse_mask.unsqueeze(0).expand(sz_b, -1, -1) # b x ls x ls
+#     return sparse_mask
 
 class Encoder(nn.Module):
     """ A encoder model with self attention mechanism. """
@@ -56,11 +77,12 @@ class Encoder(nn.Module):
     def __init__(
             self,
             num_types, d_model, d_inner,
-            n_layers, n_head, d_k, d_v, dropout):
+            n_layers, n_head, d_k, d_v, dropout, lambda_window):
         super().__init__()
 
         self.d_model = d_model
-
+        self.lambda_window = lambda_window
+        
         # position vector, used for temporal encoding
         self.position_vec = torch.tensor(
             [math.pow(10000.0, 2.0 * (i // 2) / d_model) for i in range(d_model)],
@@ -85,12 +107,12 @@ class Encoder(nn.Module):
     
         return result * non_pad_mask # [1, 4000, 512]
 
-    def forward(self, event_type, event_time, non_pad_mask, lambda_window = 1000):
+    def forward(self, event_type, event_time, non_pad_mask):
         """ Encode event sequences via masked self-attention. """
 
         # prepare attention masks
         # slf_attn_mask is where we cannot look, i.e., the future and the padding
-        window_sizes = Utils.get_window_sizes(event_time[0], lambda_window=lambda_window)
+        window_sizes = Utils.get_window_sizes(event_time[0], lambda_window=self.lambda_window)
         
         slf_attn_mask_subseq = get_subsequent_mask(event_type)
         slf_attn_mask_keypad = get_attn_key_pad_mask(seq_k=event_type, seq_q=event_type)
@@ -98,6 +120,9 @@ class Encoder(nn.Module):
         
         slf_attn_mask_keypad = slf_attn_mask_keypad.type_as(slf_attn_mask_subseq)
         slf_attn_mask_sparse = slf_attn_mask_keypad.type_as(slf_attn_mask_subseq)
+        
+        # print("SPARSE MATRIX:")
+        # print(slf_attn_mask_sparse)
         
         slf_attn_mask = (slf_attn_mask_keypad + slf_attn_mask_subseq + slf_attn_mask_sparse).gt(0)
 
@@ -157,7 +182,7 @@ class Transformer(nn.Module):
     def __init__(
             self,
             num_types, d_model=256, d_rnn=128, d_inner=1024,
-            n_layers=4, n_head=4, d_k=64, d_v=64, dropout=0.1):
+            n_layers=4, n_head=4, d_k=64, d_v=64, dropout=0.1, lambda_window = 1000):
         super().__init__()
 
         self.encoder = Encoder(
@@ -169,6 +194,7 @@ class Transformer(nn.Module):
             d_k=d_k,
             d_v=d_v,
             dropout=dropout,
+            lambda_window = lambda_window
         )
 
         self.num_types = num_types

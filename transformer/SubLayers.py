@@ -169,9 +169,6 @@ class TimeSparseAttention(nn.Module):
         
         output, attn = self.attention(q, k, v, mask=sparse_mask)
         
-        # print("ATTN OUTPUT") # 4000 x 4000 and 3000 x 3000
-        # print(attn.shape)
-        
         # Transpose to move the head dimension back: b x lq x n x dv
         # Combine the last two dimensions to concatenate all the heads together: b x lq x (n*dv)
         output = output.transpose(1, 2).contiguous().view(sz_b, len_q, -1)

@@ -37,9 +37,6 @@ def pad_time(insts):
         inst + [Constants.PAD] * (max_len - len(inst))
         for inst in insts])
     
-    print(batch_seq)
-    print(batch_seq.shape)
-    
     return torch.tensor(batch_seq, dtype=torch.float32)
 
 
