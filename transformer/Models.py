@@ -6,14 +6,14 @@ import torch.nn.functional as F
 
 import transformer.Constants as Constants
 from transformer.Layers import EncoderLayer
+import Utils
 
 
 def get_non_pad_mask(seq):
     """ Get the non-padding positions. """
-
+    
     assert seq.dim() == 2
     return seq.ne(Constants.PAD).type(torch.float).unsqueeze(-1)
-
 
 def get_attn_key_pad_mask(seq_k, seq_q):
     """ For masking out the padding part of key sequence. """
@@ -28,12 +28,27 @@ def get_attn_key_pad_mask(seq_k, seq_q):
 def get_subsequent_mask(seq):
     """ For masking out the subsequent info, i.e., masked self-attention. """
 
-    sz_b, len_s = seq.size()
+    sz_b, len_s = seq.size() # [1, 4000]
+
     subsequent_mask = torch.triu(
         torch.ones((len_s, len_s), device=seq.device, dtype=torch.uint8), diagonal=1)
     subsequent_mask = subsequent_mask.unsqueeze(0).expand(sz_b, -1, -1)  # b x ls x ls
     return subsequent_mask
 
+def get_sparse_mask(seq, window_sizes):
+    sz_b, len_s = seq.size()
+    
+    sparse_mask = torch.tril(
+        torch.ones((len_s, len_s), device=seq.device, dtype=torch.uint8))
+    
+    for i in range(len_s):
+        win_size = window_sizes[i]
+        start_mask = i
+        end_mask = min(i + win_size, len_s)
+        sparse_mask[start_mask:end_mask, i] = 0
+        
+    sparse_mask = sparse_mask.unsqueeze(0).expand(sz_b, -1, -1) # b x ls x ls
+    return sparse_mask
 
 class Encoder(nn.Module):
     """ A encoder model with self attention mechanism. """
@@ -67,21 +82,28 @@ class Encoder(nn.Module):
         result = time.unsqueeze(-1) / self.position_vec
         result[:, :, 0::2] = torch.sin(result[:, :, 0::2])
         result[:, :, 1::2] = torch.cos(result[:, :, 1::2])
-        return result * non_pad_mask
+    
+        return result * non_pad_mask # [1, 4000, 512]
 
-    def forward(self, event_type, event_time, non_pad_mask):
+    def forward(self, event_type, event_time, non_pad_mask, lambda_window = 1000):
         """ Encode event sequences via masked self-attention. """
 
         # prepare attention masks
         # slf_attn_mask is where we cannot look, i.e., the future and the padding
+        window_sizes = Utils.get_window_sizes(event_time[0], lambda_window=lambda_window)
+        
         slf_attn_mask_subseq = get_subsequent_mask(event_type)
         slf_attn_mask_keypad = get_attn_key_pad_mask(seq_k=event_type, seq_q=event_type)
+        slf_attn_mask_sparse = get_sparse_mask(event_time, window_sizes)
+        
         slf_attn_mask_keypad = slf_attn_mask_keypad.type_as(slf_attn_mask_subseq)
-        slf_attn_mask = (slf_attn_mask_keypad + slf_attn_mask_subseq).gt(0)
+        slf_attn_mask_sparse = slf_attn_mask_keypad.type_as(slf_attn_mask_subseq)
+        
+        slf_attn_mask = (slf_attn_mask_keypad + slf_attn_mask_subseq + slf_attn_mask_sparse).gt(0)
 
         tem_enc = self.temporal_enc(event_time, non_pad_mask)
         enc_output = self.event_emb(event_type)
-
+        
         for enc_layer in self.layer_stack:
             enc_output += tem_enc
             enc_output, _ = enc_layer(
@@ -169,7 +191,7 @@ class Transformer(nn.Module):
         # prediction of next event type
         self.type_predictor = Predictor(d_model, num_types)
 
-    def forward(self, event_type, event_time):
+    def forward(self, event_type, event_time, lambda_window = 1000):
         """
         Return the hidden representations and predictions.
         For a sequence (l_1, l_2, ..., l_N), we predict (l_2, ..., l_N, l_{N+1}).
@@ -179,7 +201,7 @@ class Transformer(nn.Module):
                 type_prediction: batch*seq_len*num_classes (not normalized);
                 time_prediction: batch*seq_len.
         """
-
+        
         non_pad_mask = get_non_pad_mask(event_type)
 
         enc_output = self.encoder(event_type, event_time, non_pad_mask)

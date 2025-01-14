@@ -35,7 +35,6 @@ def prepare_dataloader(opt):
     testloader = get_dataloader(test_data, opt.batch_size, shuffle=False)
     return trainloader, testloader, num_types
 
-
 def train_epoch(model, training_data, optimizer, pred_loss_func, opt):
     """ Epoch operation in training phase. """
 
@@ -48,11 +47,15 @@ def train_epoch(model, training_data, optimizer, pred_loss_func, opt):
     total_num_pred = 0  # number of predictions
     for batch in tqdm(training_data, mininterval=2,
                       desc='  - (Training)   ', leave=False):
+        
         """ prepare data """
         event_time, time_gap, event_type = map(lambda x: x.to(opt.device), batch)
-
+        
+        # event_time shape: (1, 4000)
+        
         """ forward """
         optimizer.zero_grad()
+        # Resets gradient so that the old gradient is not taken into account
 
         enc_out, prediction = model(event_type, event_time)
 
@@ -186,7 +189,8 @@ def main():
     parser.add_argument('-smooth', type=float, default=0.1)
 
     parser.add_argument('-log', type=str, default='log.txt')
-
+    parser.add_argument('-lambda_window', type=float, default=1000)
+    
     opt = parser.parse_args()
 
     # default device is CUDA
@@ -211,7 +215,8 @@ def main():
         n_head=opt.n_head,
         d_k=opt.d_k,
         d_v=opt.d_v,
-        dropout=opt.dropout,
+        dropout=opt.dropout
+        # lambda_window=opt.lambda_window
     )
     model.to(opt.device)
 

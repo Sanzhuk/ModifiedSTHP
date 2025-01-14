@@ -145,3 +145,22 @@ class LabelSmoothingLoss(nn.Module):
         loss = -(one_hot * log_prb).sum(dim=-1)
         loss = loss * non_pad_mask
         return loss
+
+
+
+def get_window_sizes(datas, lambda_window):
+    window_sizes = []
+    
+    for data in datas:
+        window_sizes.append(10)
+        continue
+        cnt = 0
+        for dif_data in datas:
+            time1 = data
+            time2 = dif_data
+            
+            if time1 >= time2 and time1 - time2 <= lambda_window:
+                cnt += 1
+        window_sizes.append(cnt)
+        
+    return window_sizes

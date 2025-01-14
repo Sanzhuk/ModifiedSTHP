@@ -96,14 +96,16 @@ class PositionwiseFeedForward(nn.Module):
         return x
 
 class TimeSparseAttention(nn.Module):
-    def __init__(self, n_head, d_model, d_k, d_v, window_sizes = None, dropout=0.0, normalize_before=True):
+    def __init__(self, n_head, d_model, d_k, d_v, lambda_window = 1000, dropout=0.0, normalize_before=True):
         super().__init__()
 
         self.normalize_before = normalize_before
         self.n_head = n_head
         self.d_k = d_k
         self.d_v = d_v
-        self.window_sizes = window_sizes
+        self.window_sizes = None # Change it
+        # self.window_sizes = get_window_sizes(lambda_window)
+        self.lamda_window = lambda_window
         self.d_model = d_model
         
         self.w_qs = nn.Linear(d_model, n_head * d_k, bias=False)
@@ -155,13 +157,20 @@ class TimeSparseAttention(nn.Module):
     
         if mask is not None:
             mask = mask.unsqueeze(1)  # For head axis broadcasting.
-            sparse_mask = sparse_mask | mask
+            
+            if sparse_mask is not None:
+                sparse_mask = sparse_mask | mask
+            else:
+                sparse_mask = mask
 
         
         if window_sizes is not None or mask is not None:
             sparse_mask = sparse_mask.bool()
         
         output, attn = self.attention(q, k, v, mask=sparse_mask)
+        
+        # print("ATTN OUTPUT") # 4000 x 4000 and 3000 x 3000
+        # print(attn.shape)
         
         # Transpose to move the head dimension back: b x lq x n x dv
         # Combine the last two dimensions to concatenate all the heads together: b x lq x (n*dv)
