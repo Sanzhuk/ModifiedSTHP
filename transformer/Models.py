@@ -182,7 +182,7 @@ class Transformer(nn.Module):
     def __init__(
             self,
             num_types, d_model=256, d_rnn=128, d_inner=1024,
-            n_layers=4, n_head=4, d_k=64, d_v=64, dropout=0.1, lambda_window = 1000):
+            n_layers=4, n_head=4, d_k=64, d_v=64, dropout=0.1, lambda_window = 1000, bin_size = 5):
         super().__init__()
 
         self.encoder = Encoder(
@@ -198,10 +198,12 @@ class Transformer(nn.Module):
         )
 
         self.num_types = num_types
+        self.bin_size = bin_size
 
         # convert hidden vectors into a scalar
         self.linear = nn.Linear(d_model, num_types)
-
+        self.linear_count = nn.Linear(d_model, num_types, bias=False)
+        
         # parameter for the weight of time difference
         self.alpha = nn.Parameter(torch.tensor(-0.1))
 

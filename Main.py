@@ -8,8 +8,9 @@ import torch.optim as optim
 
 import transformer.Constants as Constants
 import Utils
+import sys
 
-from preprocess.Dataset import get_dataloader
+from preprocess.Dataset import get_dataloader, get_dataloader_count_model
 from transformer.Models import Transformer
 from tqdm import tqdm
 
@@ -33,7 +34,11 @@ def prepare_dataloader(opt):
 
     trainloader = get_dataloader(train_data, opt.batch_size, shuffle=True)
     testloader = get_dataloader(test_data, opt.batch_size, shuffle=False)
-    return trainloader, testloader, num_types
+    
+    trainloder_count = get_dataloader_count_model(train_data, opt.batch_size, bin_size=5, shuffle=False)
+    testloader_count = get_dataloader_count_model(test_data, opt.batch_size, bin_size=5, shuffle=False)
+    
+    return trainloader, testloader, num_types, trainloder_count, testloader_count
 
 def train_epoch(model, training_data, optimizer, pred_loss_func, opt):
     """ Epoch operation in training phase. """
@@ -203,7 +208,7 @@ def main():
     print('[Info] parameters: {}'.format(opt))
 
     """ prepare dataloader """
-    trainloader, testloader, num_types = prepare_dataloader(opt)
+    trainloader, testloader, num_types, trainloder_count, testloader_count = prepare_dataloader(opt)
 
     """ prepare model """
     model = Transformer(

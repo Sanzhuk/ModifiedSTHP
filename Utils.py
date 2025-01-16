@@ -2,6 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import sys
 
 from transformer.Models import get_non_pad_mask
 
@@ -54,20 +55,52 @@ def compute_integral_unbiased(model, data, time, non_pad_mask, type_mask):
     unbiased_integral = all_lambda * diff_time
     return unbiased_integral
 
+def get_theta_matrix(model, data_count, time):
+    idx_row = (torch.ceil(time / model.bin_size) - 1.0).to(device=data_count.device, dtype=torch.int16)
+    theta_matrix = data_count[:,idx_row, :]
+    return theta_matrix
+    
 
-def log_likelihood(model, data, time, types):
-    """ Log-likelihood of sequence. """
-
+def log_likelihood_sparse(model, data, data_count, time, types):
     non_pad_mask = get_non_pad_mask(types).squeeze(2)
 
     type_mask = torch.zeros([*types.size(), model.num_types], device=data.device)
+    
     for i in range(model.num_types):
         type_mask[:, :, i] = (types == i + 1).bool().to(data.device)
 
-    all_hid = model.linear(data)
+    theta_matrix = get_theta_matrix(model, data_count, time)
+    all_hid = model.linear(data) + model.linear_count(theta_matrix)
+        
     all_lambda = softplus(all_hid, model.beta)
     type_lambda = torch.sum(all_lambda * type_mask, dim=2)
 
+    # event log-likelihood
+    event_ll = compute_event(type_lambda, non_pad_mask)
+    event_ll = torch.sum(event_ll, dim=-1)
+
+    # non-event log-likelihood, either numerical integration or MC integration
+    # non_event_ll = compute_integral_biased(type_lambda, time, non_pad_mask)
+    non_event_ll = compute_integral_unbiased(model, data, time, non_pad_mask, type_mask)
+    non_event_ll = torch.sum(non_event_ll, dim=-1)
+
+    return event_ll, non_event_ll
+
+def log_likelihood(model, data, time, types):
+    """ Log-likelihood of sequence. """    
+    non_pad_mask = get_non_pad_mask(types).squeeze(2)
+    
+    type_mask = torch.zeros([*types.size(), model.num_types], device=data.device)
+    
+    for i in range(model.num_types):
+        type_mask[:, :, i] = (types == i + 1).bool().to(data.device)
+
+
+    all_hid = model.linear(data)
+        
+    all_lambda = softplus(all_hid, model.beta)
+    type_lambda = torch.sum(all_lambda * type_mask, dim=2)
+        
     # event log-likelihood
     event_ll = compute_event(type_lambda, non_pad_mask)
     event_ll = torch.sum(event_ll, dim=-1)
