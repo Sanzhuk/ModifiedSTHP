@@ -46,7 +46,7 @@ def compute_integral_unbiased(model, data, time, non_pad_mask, type_mask):
                 torch.rand([*diff_time.size(), num_samples], device=data.device)
     temp_time /= (time[:, :-1] + 1).unsqueeze(2)
 
-    temp_hid = model.linear(data)[:, 1:, :]
+    temp_hid = model.linear_event(data)[:, 1:, :]
     temp_hid = torch.sum(temp_hid * type_mask[:, 1:, :], dim=2, keepdim=True)
 
     all_lambda = softplus(temp_hid + model.alpha * temp_time, model.beta)
@@ -56,8 +56,15 @@ def compute_integral_unbiased(model, data, time, non_pad_mask, type_mask):
     return unbiased_integral
 
 def get_theta_matrix(model, data_count, time):
-    idx_row = (torch.ceil(time / model.bin_size) - 1.0).to(device=data_count.device, dtype=torch.int16)
-    theta_matrix = data_count[:,idx_row, :]
+    data_count = data_count.unsqueeze(0)
+    # print("DATA COUNT")
+    # print(data_count.shape)
+    # print("TIME")
+    
+    
+    idx_row = (torch.ceil(time / model.bin_size) - 1.0).to(device=data_count.device, dtype=torch.long).squeeze()
+    
+    theta_matrix = data_count[:, idx_row, :]
     return theta_matrix
     
 
@@ -70,9 +77,9 @@ def log_likelihood_sparse(model, data, data_count, time, types):
         type_mask[:, :, i] = (types == i + 1).bool().to(data.device)
 
     theta_matrix = get_theta_matrix(model, data_count, time)
-    all_hid = model.linear(data) + model.linear_count(theta_matrix)
+    all_hid = model.linear_event(data) #  + model.linear_count(theta_matrix)
         
-    all_lambda = softplus(all_hid, model.beta)
+    all_lambda = softplus(all_hid, model.beta)  
     type_lambda = torch.sum(all_lambda * type_mask, dim=2)
 
     # event log-likelihood
@@ -96,7 +103,7 @@ def log_likelihood(model, data, time, types):
         type_mask[:, :, i] = (types == i + 1).bool().to(data.device)
 
 
-    all_hid = model.linear(data)
+    all_hid = model.linear(data) # data -> hidden representation
         
     all_lambda = softplus(all_hid, model.beta)
     type_lambda = torch.sum(all_lambda * type_mask, dim=2)

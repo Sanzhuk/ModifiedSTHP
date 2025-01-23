@@ -10,9 +10,10 @@ import transformer.Constants as Constants
 import Utils
 import sys
 
-from preprocess.Dataset import get_dataloader, get_dataloader_count_model
-from transformer.Models import Transformer, SparseTransformer
+from preprocess.Dataset import get_dataloader
+from transformer.Models_STHP import SparseTransformer
 from tqdm import tqdm
+import math
 
 
 def prepare_dataloader(opt):
@@ -31,14 +32,36 @@ def prepare_dataloader(opt):
     dev_data, _ = load_data(opt.data + 'dev.pkl', 'dev')
     print('[Info] Loading test data...')
     test_data, _ = load_data(opt.data + 'test.pkl', 'test')
-
+       
     trainloader = get_dataloader(train_data, opt.batch_size, shuffle=True)
     testloader = get_dataloader(test_data, opt.batch_size, shuffle=False)
     
-    trainloder_count = get_dataloader_count_model(train_data, opt.batch_size, bin_size=5, shuffle=False)
-    testloader_count = get_dataloader_count_model(test_data, opt.batch_size, bin_size=5, shuffle=False)
+    return trainloader, testloader, num_types
+
+def get_count_model_tensor(time_data, event_data, bin_size):
+    mx = torch.max(time_data)
     
-    return trainloader, testloader, num_types, trainloder_count, testloader_count
+    L = torch.ceil(mx / bin_size).to(torch.long).to(time_data.device)
+    K = torch.max(event_data)
+    batch_size = time_data.size(0)
+    C = torch.zeros(L, K, device=time_data.device)
+
+    
+    time_data = torch.flatten(time_data)
+    event_data = torch.flatten(event_data)
+    
+    seq_len = len(time_data)
+    
+    
+    for i in range(seq_len):
+        interval_idx = (torch.ceil(time_data[i] / bin_size) - 1).to(torch.long).to(time_data.device)
+        event_idx = event_data[i] - 1
+        
+        C[interval_idx][event_idx] += 1
+    
+    C.to(torch.long)
+    
+    return C
 
 def train_epoch(model, training_data, optimizer, pred_loss_func, opt):
     """ Epoch operation in training phase. """
@@ -56,17 +79,19 @@ def train_epoch(model, training_data, optimizer, pred_loss_func, opt):
         """ prepare data """
         event_time, time_gap, event_type = map(lambda x: x.to(opt.device), batch)
         
+        count_matrix = get_count_model_tensor(event_time, event_type, model.bin_size)
+        
         # event_time shape: (1, 4000)
         
         """ forward """
         optimizer.zero_grad()
         # Resets gradient so that the old gradient is not taken into account
-
-        enc_out, prediction = model(event_type, event_time)
+        
+        enc_out, prediction = model(count_matrix, event_type, event_time)
 
         """ backward """
         # negative log-likelihood
-        event_ll, non_event_ll = Utils.log_likelihood(model, enc_out, event_time, event_type)
+        event_ll, non_event_ll = Utils.log_likelihood_sparse(model, enc_out, count_matrix, event_time, event_type)
         event_loss = -torch.sum(event_ll - non_event_ll)
 
         # type prediction
@@ -110,12 +135,13 @@ def eval_epoch(model, validation_data, pred_loss_func, opt):
                           desc='  - (Validation) ', leave=False):
             """ prepare data """
             event_time, time_gap, event_type = map(lambda x: x.to(opt.device), batch)
-
+            count_matrix = get_count_model_tensor(event_time, event_type, model.bin_size)
+            
             """ forward """
-            enc_out, prediction = model(event_type, event_time)
+            enc_out, prediction = model(count_matrix, event_type, event_time)
 
             """ compute loss """
-            event_ll, non_event_ll = Utils.log_likelihood(model, enc_out, event_time, event_type)
+            event_ll, non_event_ll = Utils.log_likelihood_sparse(model, enc_out, count_matrix, event_time, event_type)
             event_loss = -torch.sum(event_ll - non_event_ll)
             _, pred_num = Utils.type_loss(prediction[0], event_type, pred_loss_func)
             se = Utils.time_loss(prediction[1], event_time)
@@ -194,7 +220,8 @@ def main():
     parser.add_argument('-smooth', type=float, default=0.1)
 
     parser.add_argument('-log', type=str, default='log.txt')
-    parser.add_argument('-lambda_window', type=float, default=1000)
+    parser.add_argument('-lambda_window', type=float, default=5)
+    parser.add_argument('-bin_size', type=int, default=5)
     
     opt = parser.parse_args()
 
@@ -208,7 +235,7 @@ def main():
     print('[Info] parameters: {}'.format(opt))
 
     """ prepare dataloader """
-    trainloader, testloader, num_types, trainloder_count, testloader_count = prepare_dataloader(opt)
+    trainloader, testloader, num_types = prepare_dataloader(opt)
     
     """ prepare model """
     
@@ -222,21 +249,10 @@ def main():
         d_k=opt.d_k,
         d_v=opt.d_v,
         dropout=opt.dropout,
-        lambda_window=opt.lambda_window
+        lambda_window=opt.lambda_window,
+        bin_size=opt.bin_size
     )
     
-    # model = Transformer(
-    #     num_types=num_types,
-    #     d_model=opt.d_model,
-    #     d_rnn=opt.d_rnn,
-    #     d_inner=opt.d_inner_hid,
-    #     n_layers=opt.n_layers,
-    #     n_head=opt.n_head,
-    #     d_k=opt.d_k,
-    #     d_v=opt.d_v,
-    #     dropout=opt.dropout,
-    #     lambda_window=opt.lambda_window
-    # )
     model.to(opt.device)
 
     """ optimizer and scheduler """

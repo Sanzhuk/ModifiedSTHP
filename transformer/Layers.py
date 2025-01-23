@@ -10,7 +10,7 @@ class EncoderLayer(nn.Module):
         super(EncoderLayer, self).__init__()
         # self.slf_attn = MultiHeadAttention(
             # n_head, d_model, d_k, d_v, dropout=dropout, normalize_before=normalize_before)
-        self.slf_attn = TimeSparseAttention(
+        self.slf_attn = MultiHeadAttention(
             n_head, d_model, d_k, d_v, dropout=dropout, normalize_before=normalize_before
         )
         self.pos_ffn = PositionwiseFeedForward(
