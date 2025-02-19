@@ -8,10 +8,15 @@ from transformer.Models import get_non_pad_mask
 
 
 def softplus(x, beta):
-    # hard thresholding at 20
+    """ Numerically stable softplus implementation """
+    # Clamp the input to prevent overflow
+    x = torch.clamp(x, min=-50, max=50)
+    
+    # Apply beta scaling
     temp = beta * x
-    temp[temp > 20] = 20
-    return 1.0 / beta * torch.log(1 + torch.exp(temp))
+    
+    # Use log1p for better numerical stability
+    return (1.0 / beta) * torch.log1p(torch.exp(temp))
 
 
 def compute_event(event, non_pad_mask):
@@ -49,6 +54,9 @@ def compute_integral_unbiased(model, data, time, non_pad_mask, type_mask):
     temp_hid = model.linear_event(data)[:, 1:, :]
     temp_hid = torch.sum(temp_hid * type_mask[:, 1:, :], dim=2, keepdim=True)
 
+    # Add numerical stability to temp_hid
+    temp_hid = torch.clamp(temp_hid, min=-50, max=50)
+
     all_lambda = softplus(temp_hid + model.alpha * temp_time, model.beta)
     all_lambda = torch.sum(all_lambda, dim=2) / num_samples
 
@@ -56,19 +64,28 @@ def compute_integral_unbiased(model, data, time, non_pad_mask, type_mask):
     return unbiased_integral
 
 def get_theta_matrix(model, data_count, time):
-    data_count = data_count.unsqueeze(0)
-    # print("DATA COUNT")
-    # print(data_count.shape)
-    # print("TIME")
+    """
+    Get theta matrix with proper bounds checking
+    """
+    # Calculate indices
+    idx_row = (torch.ceil(time / model.bin_size) - 1.0).to(device=data_count.device, dtype=torch.long)
     
+    # Clamp indices to valid range
+    max_idx = data_count.size(1) - 1  # Maximum valid index
+    idx_row = torch.clamp(idx_row, min=0, max=max_idx)
     
-    idx_row = (torch.ceil(time / model.bin_size) - 1.0).to(device=data_count.device, dtype=torch.long).squeeze()
+    # Handle batched input
+    batch_size = time.size(0)
+    theta_matrix = []
     
-    theta_matrix = data_count[:, idx_row, :]
-    return theta_matrix
+    for b in range(batch_size):
+        theta_matrix.append(data_count[b, idx_row[b], :])
+    
+    return torch.stack(theta_matrix)
     
 
-def log_likelihood_sparse(model, data, data_count, time, types):
+def log_likelihood_sparse(model, data, data_count, time, types, volume_matrix):
+    """ Log-likelihood of sequence with sparse attention. """    
     non_pad_mask = get_non_pad_mask(types).squeeze(2)
 
     type_mask = torch.zeros([*types.size(), model.num_types], device=data.device)
@@ -77,17 +94,29 @@ def log_likelihood_sparse(model, data, data_count, time, types):
         type_mask[:, :, i] = (types == i + 1).bool().to(data.device)
 
     theta_matrix = get_theta_matrix(model, data_count, time)
-    all_hid = model.linear_event(data) #  + model.linear_count(theta_matrix)
+    all_hid = model.linear_event(data)
         
-    all_lambda = softplus(all_hid, model.beta)  
+    # Add numerical stability checks and handling
+    all_hid = torch.clamp(all_hid, min=-50, max=50)
+    
+    if torch.isnan(all_hid).any() or torch.isinf(all_hid).any():
+        print("Warning: NaN or Inf detected in hidden states")
+        all_hid = torch.nan_to_num(all_hid, nan=0.0, posinf=50, neginf=-50)
+    
+    all_lambda = softplus(all_hid, model.beta)
+    
+    # Add stability check for all_lambda
+    if torch.isnan(all_lambda).any() or torch.isinf(all_lambda).any():
+        print("Warning: NaN or Inf detected in lambda values")
+        all_lambda = torch.nan_to_num(all_lambda, nan=1e-6, posinf=1e6, neginf=1e-6)
+    
     type_lambda = torch.sum(all_lambda * type_mask, dim=2)
 
     # event log-likelihood
     event_ll = compute_event(type_lambda, non_pad_mask)
     event_ll = torch.sum(event_ll, dim=-1)
 
-    # non-event log-likelihood, either numerical integration or MC integration
-    # non_event_ll = compute_integral_biased(type_lambda, time, non_pad_mask)
+    # non-event log-likelihood
     non_event_ll = compute_integral_unbiased(model, data, time, non_pad_mask, type_mask)
     non_event_ll = torch.sum(non_event_ll, dim=-1)
 

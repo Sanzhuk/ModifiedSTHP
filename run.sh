@@ -1,5 +1,5 @@
 device=0
-data=data/
+data=new_data_STHP/
 batch=4
 n_head=4
 n_layers=4
@@ -8,7 +8,7 @@ d_rnn=64
 d_inner=1024
 d_k=512
 d_v=512
-dropout=0.1
+dropout=0.2
 lr=1e-4
 smooth=0.1
 epoch=100

@@ -4,6 +4,7 @@ import torch.utils.data
 
 from transformer import Constants
 import preprocess.Utils as Utils
+import sys
 
 class EventData(torch.utils.data.Dataset):
     """ Event stream dataset. """
@@ -17,8 +18,7 @@ class EventData(torch.utils.data.Dataset):
         self.time_gap = [[elem['time_since_last_event'] for elem in inst] for inst in data] # 1 x n_samples
         # plus 1 since there could be event type 0, but we use 0 as padding
         self.event_type = [[elem['type_event'] + 1 for elem in inst] for inst in data] # 1 x n_samples
-        
-        # self.volume = [[elem['volume'] for elem in inst] for inst in data]
+        self.volume = [[elem['volume'] for elem in inst] for inst in data]
         
         self.length = len(data)
     
@@ -27,7 +27,7 @@ class EventData(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         """ Each returned element is a list, which represents an event stream """
-        return self.time[idx], self.time_gap[idx], self.event_type[idx]# , self.volume[idx]
+        return self.time[idx], self.time_gap[idx], self.event_type[idx], self.volume[idx]
     
 def pad_time(insts):
     """ Pad the instance to the max seq length in batch. """
@@ -52,32 +52,22 @@ def pad_type(insts):
 
     return torch.tensor(batch_seq, dtype=torch.long)
 
-
 def collate_fn(insts):
     """ Collate function, as required by PyTorch. """
 
-    time, time_gap, event_type = list(zip(*insts))
+    time, time_gap, event_type, volume = list(zip(*insts))
     time = pad_time(time)
     time_gap = pad_time(time_gap)
     event_type = pad_type(event_type)
-    return time, time_gap, event_type
+    volume = pad_time(volume)
+    
+    return time, time_gap, event_type, volume
 
 
 def get_dataloader(data, batch_size, shuffle=True):
     """ Prepare dataloader. """
     
     ds = EventData(data)
-    dl = torch.utils.data.DataLoader(
-        ds,
-        num_workers=2,
-        batch_size=batch_size,
-        collate_fn=collate_fn,
-        shuffle=shuffle
-    )
-    return dl
-
-def get_dataloader_count_model(data, batch_size, bin_size=5, shuffle=False):
-    ds = CountModelData(data, bin_size=bin_size)
     dl = torch.utils.data.DataLoader(
         ds,
         num_workers=2,
